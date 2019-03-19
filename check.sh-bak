@@ -1,0 +1,53 @@
+#!/bin/bash
+#-*- coding:utf-8 -*-
+
+# 服务检查
+#Exit code 0 - Check is passing
+#Exit code 1 - Check is warning
+#Any other code - Check is failing
+
+
+function init(){
+  cd /usr/local/proms-agent
+  #lan ip
+  IP=`ip addr show em2 | grep 'inet '| grep 'brd ' |awk '{print $2}' |awk -F '/' '{print $1}'`
+  log_dir='/data1/logs/proms'
+  sudo ss -nlp |grep proms-agent > /dev/null 2>&1
+  if (( $? != 0 ));then
+    nohup ./proms-agent -l $IP > $log_dir/proms-agent.log 2>$log_dir/proms-agent.err &
+  else
+    echo 'proms-agent process has exist'
+  fi
+  sudo ss -nlp |grep consul > /dev/null 2>&1
+  if (( $? != 0 ));then
+    nohup ./consul agent  -config-file=./script/conf/consul.json -enable-script-checks=true > $log_dir/consul.log 2>&1 &
+  else
+    echo './consul process has exist'
+  fi
+  find . -name "*.json" |xargs sed -i "s/10.0.0.218/$IP/g"
+#  find . -name "*.json" |xargs sed -i "s/\"Address\": \"\"/\"Address\": \"$IP\"/g"
+}
+
+function register() {
+  if [[ $2 == 0 ]];then
+    curl -s localhost:8500/v1/agent/services |grep "\"$1\":" > /dev/null 2>&1
+    # 如果没有注册服务，则注册
+    if [[ $? != 0 ]];then
+      init
+      curl -X PUT -d @/usr/local/proms-agent/script/conf/$1.json localhost:8500/v1/agent/service/register
+    fi
+  fi
+
+}
+cd /usr/local/proms-agent
+for service in `ls -I check.json -I consul.json -I diskChk.json -I sys.json script/conf/ |sed 's/.json//'`;do
+  if [[ $service == 'redis' ]];then
+    sudo ss -nlp |grep 'redis-server' > /dev/null 2>&1
+  elif [[ $service == 'hbase' ]];then
+    sudo ss -nlp |awk '{print $4}' |grep ":16030" > /dev/null 2>&1
+  else
+    sudo ss -nlp |grep $service2 > /dev/null 2>&1
+  fi
+  # 如果有实例运行,则进一步判断
+  register $service $?
+done

@@ -1,0 +1,123 @@
+#!/bin/env python
+#-*- coding:utf-8 -*-
+
+from config import monit_keys
+from config import slave_keys
+import re
+import commands, signal
+import sys
+
+
+def handler(signum, frame):
+     exit()
+
+def get_mysql_stats(port = 3306):
+    cmd = "/usr/local/mysql/bin/mysql -uzabbixuser -pzabbixusermy4399 -h127.0.0.1 -N -P%s -e 'show global status'" % port
+    stat_regex = re.compile(ur'(\w+):(\w+\.?[0-9]*)\n')
+    mysql_status = commands.getoutput(cmd)
+    stats = dict(stat_regex.findall(mysql_status.replace("\t",":")))
+    return stats
+
+def package_mysql_stats(stats = {}, port = 3306):
+    p = []
+    for key, vtype in monit_keys:
+        value = -1
+        if key in stats.keys():
+            if key == 'Innodb_buffer_pool_pages_total':
+                # 转换成字节
+                value =  float(stats['Innodb_page_size']) * int(stats['Innodb_buffer_pool_pages_total'])
+            elif key == 'Slave_running':
+                if stats[key] == 'OFF':
+                    value = 0
+                else:
+                    value = 1
+            else:
+                value = stats[key]
+        elif stats:
+            if key == 'Writes':
+                value =  long(stats['Com_insert']) + long(stats['Com_update']) + long(stats['Com_delete'])
+            elif key == 'Innodb_buffer_pool_pages_used_rate':
+                value = format_float(100 * (int(stats['Innodb_buffer_pool_pages_total']) - int(stats['Innodb_buffer_pool_pages_free'])) / float(stats['Innodb_buffer_pool_pages_total']))
+            elif key == 'Query_cache_hits':
+                if stats['Qcache_hits'] != '0':
+                    value = format_float(100* (float(stats['Qcache_hits']) / ( int(stats['Qcache_hits']) + int(stats['Qcache_inserts']) )))
+                else:
+                    value = 0
+            elif key == 'Thread_cache_hits':
+                value = format_float(100 * ( 1 - float(stats['Threads_created']) / int(stats['Connections'])))
+            elif key == 'Innodb_buffer_read_hits':
+                if stats['Innodb_buffer_pool_read_requests'] != '0':
+                    value = format_float(100 * (1 - float(stats['Innodb_buffer_pool_reads']) / int(stats['Innodb_buffer_pool_read_requests'])))
+            elif key == 'key_buffer_read_hits':
+                if stats['Key_read_requests'] != '0':
+                    value = format_float(100 * (1 - float(stats['Key_reads']) / int(stats['Key_read_requests'])))
+                else:
+                    value = 0
+            elif key == 'Key_buffer_write_hits':
+                if stats['Key_write_requests'] != '0':
+                    value = format_float(100 * (1 - float(stats['Key_writes']) / int(stats['Key_write_requests'])))
+                else:
+                    value = 0
+        p.append('%s{port="%s"} %s' % (key, port, value))
+       
+    return p
+
+def get_slave_info(port = 3306):
+    cmd = "/usr/local/mysql/bin/mysql -uzabbixuser -pzabbixusermy4399 -h127.0.0.1 -P%s -e 'show slave status\G'" % port
+    stat_regex = re.compile(ur'(\w+): (\w+\.?[0-9]*)\n')
+    slave_status = commands.getoutput(cmd)
+    stats = dict(stat_regex.findall(slave_status.replace("\t",":")))
+    p = []
+    value = -1
+    for key, vtype in slave_keys:
+        if key in stats.keys():
+            if key == 'Slave_IO_Running':
+                if stats[key] == 'Yes':
+                    value = 1
+                else:
+                    value = 0
+            elif key == 'Slave_SQL_Running':
+                if stats[key] == 'Yes':
+                    value = 1
+                else:
+                    value = 0
+            else:
+                value = stats[key] 
+           
+            p.append('%s{port="%s"} %s' % (key, port, value))
+    return p
+
+# 保留两位小数
+def format_float(num):
+    return float('%.2f' % num)
+
+if __name__ == '__main__':
+    cmd = "sudo /bin/netstat -ntlp |grep mysql |awk '{print $4}' "
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(4)
+    mysql_instances = commands.getoutput(cmd)
+    # 若有实例则进行下一步
+    if mysql_instances:
+        l_mysql_instances = []
+        l_slave_instances = []
+        # 遍历所有实例
+        for i in mysql_instances.split('\n'):
+            port = i.split(':')[-1]
+            mysql_stats = get_mysql_stats(port)
+            l_mysql_instances.append(package_mysql_stats(mysql_stats, port))
+            if 'Slave_running' in mysql_stats.keys() and mysql_stats['Slave_running'] == 'ON':
+                l_slave_instances.append(get_slave_info(port))
+        # 循环所有实例所有指标
+        for m in range(len(l_mysql_instances[0])):
+            print '# HELP %s info' % l_mysql_instances[0][m].split('{')[0]
+            print '# TYPE %s %s' % (l_mysql_instances[0][m].split('{')[0], monit_keys[m][1])
+            for n in range(len(l_mysql_instances)):
+                print 'mysql_%s' % l_mysql_instances[n][m]
+        # 循环所有实例所有指标
+        if l_slave_instances:
+            for m in range(len(l_slave_instances[0])):
+                print '# HELP %s info' % l_slave_instances[0][m].split('{')[0]
+                print '# TYPE %s %s' % (l_slave_instances[0][m].split('{')[0], slave_keys[m][1])
+                for n in range(len(l_slave_instances)):
+                    print 'mysql_%s' % l_slave_instances[n][m]
+    signal.alarm(0)

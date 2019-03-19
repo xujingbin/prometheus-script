@@ -1,0 +1,11 @@
+{
+  "name": "hbase",
+  "tags": ["全站数据"],
+  "Address": "10.0.0.218",
+  "port": 7080,
+  "check": {
+    "HTTP": "http://10.0.0.218:7080/mymetrics?'target=hbase&type=hbase'",
+    "interval": "30s",
+    "DeregisterCriticalServiceAfter": "2m"
+   }
+}

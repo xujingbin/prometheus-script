@@ -1,0 +1,10 @@
+{
+  "name": "diskChk",
+  "tags": ["全站统计"],
+  "Address": "10.0.0.218",
+  "port": 7080,
+  "check": {
+    "HTTP": "http://10.0.0.218:7080/mymetrics?'target=diskChk&type=diskChk'",
+    "interval": "30s"
+   }
+}

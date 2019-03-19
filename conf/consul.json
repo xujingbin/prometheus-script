@@ -1,0 +1,12 @@
+{
+  "data_dir": "/tmp/consul",
+  "bind_addr": "0.0.0.0",
+  "client_addr": "127.0.0.1",
+  "retry_interval": "30s",
+  "retry_join": ["10.0.0.194", "10.0.0.195", "10.0.0.199"],
+  "retry_max": 10,
+  "log_level": "INFO",
+  "datacenter": "sen_hua_kan_dan_qiao",
+  "rejoin_after_leave": true,
+  "leave_on_terminate": true
+}

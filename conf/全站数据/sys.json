@@ -1,0 +1,10 @@
+{
+  "name": "sys",
+  "tags": ["全站数据"],
+  "Address": "10.0.0.218",
+  "port": 7080,
+  "check": {
+    "HTTP": "http://10.0.0.218:7080/mymetrics?target=sys&type=sys",
+    "interval": "30s"
+   }
+}

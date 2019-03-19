@@ -1,0 +1,113 @@
+#!/bin/env python
+#-*- coding:utf-8 -*-
+
+import re
+import commands
+#import profile
+#from pudb import set_trace; set_trace()
+
+
+monit_keys = {
+    'connected_clients': 'gauge',
+    'blocked_clients': 'gauge',
+    'used_memory': 'gauge',
+    'used_memory_rss': 'gauge',
+    'max_memory': 'gauge',
+    'mem_fragmentation_ratio': 'gauge',
+    'total_commands_processed': 'counter',
+    'rejected_connections': 'counter',
+    'expired_keys': 'counter',
+    'total_net_input_bytes': 'gauge',
+    'total_net_output_bytes': 'gauge',
+    'evicted_keys': 'counter',
+    'client_biggest_input_buf': 'counter',
+    'client_longest_output_list': 'counter',
+    'keyspace_hits': 'counter',
+    'keyspace_misses': 'counter',
+    'port_os_used_cpu': 'gauge',
+}
+class RedisStats:
+    redis_cli = '/usr/local/bin/redis-cli'
+    stat_regex = re.compile(ur'(\w+):([0-9]+\.?[0-9]*)\r')
+
+#    @profile
+    def __init__(self, port='6379', host='127.0.0.1' ,status='info'):
+        self.cmd = '%s -h %s -p %s %s' % (self.redis_cli, host, port, status)
+
+
+#    @profile
+    def get_info(self, proc, cpu_used):
+        stats = dict(self.stat_regex.findall(commands.getoutput(self.cmd)))
+        p = {}
+        for (key, vtype) in monit_keys.items():
+            if key == 'port_os_used_cpu':
+                #str = "/usr/bin/top -bn 1 -p %s | grep %s | awk '{if ($9 ~ /^[0-9.].*[0-9]$/) print $9}'  | head -1" % (proc, proc)
+                value = cpu_used
+                p[key] = '{port="%s"} %s' % (port, value)
+            elif key == 'max_memory':
+                value = commands.getoutput('%s -h %s -p %s config get maxmemory |grep -v maxmemory' % (self.redis_cli, host, port))
+                p[key] = '{port="%s"} %s' % (port, value)
+            else:
+                if key in stats.keys():
+                    value = stats[key]
+                    p[key] = '{port="%s"} %s' % (port, value)
+        return p
+
+def get_cpuinfo():
+    cmd = "/usr/bin/top -bn 1 |grep redis-server |awk '{print $1,$9}'"
+    str_cpuinfo = commands.getoutput(cmd)
+    d_cpuinfo = {}
+    l_cpuinfo = str_cpuinfo.splitlines()
+    for i in range(len(l_cpuinfo)):
+        d_cpuinfo[l_cpuinfo[i].split(' ')[0]] = l_cpuinfo[i].split(' ')[1]
+    return d_cpuinfo
+
+if __name__ == "__main__":
+    cmd = "ps -ef |grep redis-server |grep -v grep |awk '{print $2,$9}'"
+    redis_instance =  commands.getoutput(cmd)
+    conf_port = commands.getoutput("ls /opt/cachecloud/conf/ /etc/redisConf/ |egrep -o '[0-9]+' |sort |uniq")
+    l_conf_port = list(conf_port.split())
+    l_port = []
+    print '# HELP is_alive info'
+    print '# TYPE is_alive gauge'
+    for i in redis_instance.split('\n'):
+        if ':' in i:
+            l_port.append(i.split(':')[1])
+    for _port in l_conf_port:
+        if _port not in l_port:
+            print 'redis_is_alive{port="%s"} %s' % (_port, 0)
+        else:
+            print 'redis_is_alive{port="%s"} %s' % (_port, 1)
+    # 判断是否有运行redis实例
+    if redis_instance == '':
+        print 'does not have a redis'
+    else:
+        d_cpuinfo = get_cpuinfo()
+        # 循环每个实例,每个实例的数据都append到l_all_metrics列表中
+        l_all_metrics=[]
+        for i in redis_instance.split('\n'):
+            if ':' in i:
+                proc = i.split(' ')[0]
+                host = i.split(' ')[1].split(':')[0]
+                port = i.split(':')[1]
+            else:
+                host = '127.0.0.1'
+                confFile=i.split(' ')[1]
+                proc=i.split(' ')[0]
+                port = commands.getoutput("grep port %s |cut -d ' ' -f 2" % confFile)
+            if host == '*':
+                host=commands.getoutput("ip addr show em2 | grep 'inet ' |awk '{print $2}' |awk -F '/' '{print $1}'")
+            _redis = RedisStats(port, host)
+            l_all_metrics.append(_redis.get_info(proc, d_cpuinfo[proc]))
+        d_all_metrics = {}
+        # 把list转成dict:{'metric':['{port="%s"} %s % (port, value)']}
+        for m in l_all_metrics:
+            for (k, v) in m.items():
+                if d_all_metrics.get(k) is None:
+                    d_all_metrics[k] = []
+                d_all_metrics[k].append(v)
+        for (metric, value) in d_all_metrics.items():
+            print '# HELP %s info' % metric
+            print '# TYPE %s %s' % (metric, monit_keys[metric])
+            for v in d_all_metrics[metric]:
+                print ('redis_%s%s' % (metric, v))

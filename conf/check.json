@@ -1,0 +1,9 @@
+{
+  "name": "check",
+  "tags": ["check"],
+  "check": {
+    "script": "timeout -s SIGKILL 1 /usr/local/proms-agent/script/check.sh",
+    "interval": "15s",
+    "timeout": "1s"
+   }
+}
